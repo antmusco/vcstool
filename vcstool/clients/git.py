@@ -3,6 +3,7 @@ from shutil import which
 import subprocess
 
 from vcstool.executor import USE_COLOR
+from vcstool.results import CompareResults
 
 from .vcs_base import VcsClientBase
 from ..util import rmtree
@@ -54,89 +55,82 @@ class GitClient(VcsClientBase):
     def branch(self, command):
         return self._branch(command.all)
 
-    def _are_unstaged_changes(self):
+    def _unstaged_changes(self):
         result = self.custom(GitCustomCommand(['diff', '--no-ext-diff', '--quiet']))
         return result['returncode'] == 1
 
-    def _are_staged_changes(self):
+    def _staged_changes(self):
         result = self.custom(GitCustomCommand(['diff', '--no-ext-diff', '--cached', '--quiet']))
         return result['returncode'] == 1
 
-    def _are_untracked_files(self):
+    def _untracked_files(self):
         result = self.custom(GitCustomCommand(['ls-files', '--others', '--exclude-standard']))
         return result['output'] != ''
 
-    def _are_stashes(self):
+    def _stashes(self):
         result = self.custom(GitCustomCommand(['rev-parse', '--verify', '--quiet', 'refs/stash']))
         return result['returncode'] == 0
 
-    def _get_ahead_behind(self, branch, remote, remote_branch):
+    def _get_ahead_behind(self, local_branch, remote, remote_branch):
+        """Returns an (int, int) tuple corresponding to the (ahead, behind) commit numbers."""
+        if not remote or not remote_branch:
+            return (0, 0)
         # remove leading "refs/heads/"
         prefix = 'refs/heads/'
         if remote_branch.startswith(prefix):
             remote_branch = remote_branch[len(prefix):]
-        return self.custom(GitCustomCommand(['rev-list', '--left-right', '--count',
-                                             f'{branch}...{remote}/{remote_branch}']))
+        result = self.custom(GitCustomCommand(['rev-list', '--left-right', '--count',
+                                               f'{local_branch}...{remote}/{remote_branch}']))
+        # If the command failed, just return an error sentinel.
+        if result['returncode']:
+            return (-1, -1)
+        # Parse out the ints and return as a tuple
+        return (int(i) for i in result['output'].strip().split())
 
     def _get_remote(self, local_branch: str):
-        return self.custom(GitCustomCommand(['config', f'branch.{local_branch}.remote']))
+        result =  self.custom(GitCustomCommand(['config', f'branch.{local_branch}.remote']))
+        return result['output'] if result['returncode'] == 0 else ''
 
     def _get_remote_branch(self, local_branch: str):
-        return self.custom(GitCustomCommand(['config', f'branch.{local_branch}.merge']))
+        result =  self.custom(GitCustomCommand(['config', f'branch.{local_branch}.merge']))
+        return result['output'] if result['returncode'] == 0 else ''
 
     def _get_tag(self, local_branch : str):
-        return self.custom(GitCustomCommand(['describe', '--tags', '--abbrev=0', '--exact-match',
-                                             local_branch]))
+        result =  self.custom(GitCustomCommand(['describe', '--tags', '--abbrev=0', '--exact-match',
+                                                local_branch]))
+        return result['output'].strip() if result['returncode'] == 0 else ''
 
     def _get_hash(self, local_branch : str):
-        return self.custom(GitCustomCommand(['rev-parse', local_branch]))
-
-    @staticmethod
-    def _parse_ahead_behind(ahead_behind_output: str):
-        return (int(i) for i in ahead_behind_output['output'].strip().split())
+        result = self.custom(GitCustomCommand(['rev-parse', local_branch]))
+        return result['output'].strip() if result['returncode'] == 0 else ''
 
     def compare(self, command):
-        # Get the branches
         result = self._branch(False)
+        # If we can't get the local branch, no point in continuing.
         if result['returncode']:
             return result
         local_branch = result['output']
 
-        result = self._get_remote(local_branch)
-        remote = result['output'] if result['returncode'] == 0 else ''
-
-        result = self._get_remote_branch(local_branch)
-        remote_branch = result['output'] if result['returncode'] == 0 else ''
-
-        ahead, behind = (0, 0)
-        if remote and remote_branch:
-            result = self._get_ahead_behind(local_branch, remote, remote_branch)
-            if result['returncode']:
-                return result
-            ahead, behind = self._parse_ahead_behind(result)
-
-        result = self._get_tag(local_branch)
-        tag = result['output'].strip() if result['returncode'] == 0 else ''
-
-        result = self._get_hash(local_branch)
-        the_hash = result['output'].strip() if result['returncode'] == 0 else ''
+        remote = self._get_remote(local_branch)
+        remote_branch = self._get_remote_branch(local_branch)
+        ahead, behind = self._get_ahead_behind(local_branch, remote, remote_branch)
 
         return {
             'cmd': 'compare',
             'cwd': self.path,
-            'output': {
-                'local_branch' : local_branch,
-                'remote_branch': remote_branch,
-                'tag': tag,
-                'hash': the_hash,
-                'remote': remote,
-                'ahead': ahead,
-                'behind': behind,
-                'are_unstaged_changes': self._are_unstaged_changes(),
-                'are_staged_changes': self._are_staged_changes(),
-                'are_untracked_files': self._are_untracked_files(),
-                'are_stashes': self._are_stashes(),
-            },
+            'output': CompareResults(
+                local_branch=local_branch,
+                remote_branch=remote_branch,
+                tag=self._get_tag(local_branch),
+                hash=self._get_hash(local_branch),
+                remote=remote,
+                ahead=ahead,
+                behind=behind,
+                unstaged_changes=self._unstaged_changes(),
+                staged_changes=self._staged_changes(),
+                untracked_files=self._untracked_files(),
+                stashes=self._stashes(),
+            ),
             'returncode': 0
         }
 
