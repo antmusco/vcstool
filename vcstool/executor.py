@@ -279,6 +279,11 @@ def ansi(keyword):
         'redf': '\033[31m',
         'reset': '\033[0m',
         'yellowf': '\033[33m',
+        'grey4b': '\033[48;5;235m',
+        'brightblackf': '\033[38;5;8m',
+        'brightmagentaf': '\033[38;5;13m',
+        'brightcyanf': '\033[38;5;14m',
+        'brightyellowf': '\033[38;5;11m'
     }
     if keyword in codes:
         return codes[keyword]
