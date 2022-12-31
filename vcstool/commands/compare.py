@@ -3,7 +3,7 @@ import sys
 import os
 import abc
 from typing import Any, Dict, List, Optional
-from enum import Enum, IntFlag, auto
+from enum import IntEnum, IntFlag, auto
 
 import prettytable as pt
 
@@ -78,14 +78,14 @@ class LegendFlags(IntFlag):
     REPO_STATUS = auto()
 
 
-class Status(Enum):
+class Status(IntEnum):
     """Enum indicating the status of the repository."""
 
     NOMINAL = 0
     UNTRACKED = 1
 
 
-class Tracking(Enum):
+class Tracking(IntEnum):
     """Enum indicating the tracking status of the repository."""
 
     EQUAL = 0
@@ -101,23 +101,28 @@ class IRepoTableEntry(abc.ABC):
 
     HEADERS = ["S", "Repository", "Branch", "Trk", "Flags", "Tag", "Hash"]
 
-    def color_row(self, is_odd_row: bool, max_display_cols: int) -> List[str]:
+    def get_color_row(self, is_odd_row: bool, max_display_cols: int) -> List[str]:
         """Returns a formatted and colored row representing this entry."""
-        reset = ansi("reset")
-        background = ansi("grey4b") if is_odd_row else reset
         # The order of these entries should match the order of HEADERS.
-        rows = [
-            background + self.color_status() + reset + background,
-            background + self.color_path() + reset + background,
-            background + self.color_branch() + reset + background,
-            background + self.color_track() + reset + background,
-            background + self.color_flags() + reset + background,
-            background + self.color_tag() + reset + background,
-            background + self.color_hash() + reset + background,
+        cells = [
+            self.get_color_status(),
+            self.get_color_repository(),
+            self.get_color_branch(),
+            self.get_color_track(),
+            self.get_color_flags(),
+            self.get_color_tag(),
+            self.get_color_hash(),
         ]
+        cells = self._wrap_cells_with_background_color(cells, is_odd_row)
         # max_dispaly_cols is used to hide columns if the terminal is not wide enough to display
         # the full table.
-        return rows[:max_display_cols]
+        return cells[:max_display_cols]
+
+    @staticmethod
+    def _wrap_cells_with_background_color(cells: List[str], is_odd_row: bool):
+        reset = ansi("reset")
+        background = ansi("grey4b") if is_odd_row else reset
+        return [background + cell + reset + background for cell in cells]
 
     @abc.abstractmethod
     def is_significant(self) -> bool:
@@ -128,31 +133,31 @@ class IRepoTableEntry(abc.ABC):
         return NotImplemented
 
     @abc.abstractmethod
-    def color_status(self) -> str:
+    def get_color_status(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
-    def color_path(self) -> str:
+    def get_color_repository(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
-    def color_branch(self) -> str:
+    def get_color_branch(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
-    def color_track(self) -> str:
+    def get_color_track(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
-    def color_flags(self) -> str:
+    def get_color_flags(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
-    def color_tag(self) -> str:
+    def get_color_tag(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
-    def color_hash(self) -> str:
+    def get_color_hash(self) -> str:
         return NotImplemented
 
 
@@ -164,7 +169,7 @@ class RepoTable(pt.PrettyTable):
     HEADER_END = [""]
     ROW_END = [ansi("reset")]
 
-    DISPLAY_WIDTH_MARGIN = 5
+    DISPLAY_WIDTH_MARGIN = 10
 
     def __init__(self, entries: Dict[str, IRepoTableEntry], manifest_file: str) -> None:
         super().__init__()
@@ -172,29 +177,23 @@ class RepoTable(pt.PrettyTable):
         self._manifest_file = manifest_file
         self._sorted_paths = sorted(entries.keys())
         self._max_display_cols = len(IRepoTableEntry.HEADERS)
-        self._legend_flags = LegendFlags(0)
-        self._generate()
+        self._legend_flags: LegendFlags
+        # Initial table generation:
+        self._reset_and_add_entries()
 
-    def __str__(self) -> str:
-        string = self._table_str()
-        if self._legend_flags & LegendFlags.TRACKING_AND_FLAGS:
-            string += "\n" + self._tracking_and_flags_legend_str()
-        if self._legend_flags & LegendFlags.REPO_STATUS:
-            string += "\n" + self._repo_status_and_legend_str()
-        if self._legend_flags & LegendFlags.MISSING_REPO:
-            string += "\n" + self._missing_repos_tip_str()
-        return string
-
-    def _generate(self) -> None:
+    def _reset_and_add_entries(self) -> None:
         self.clear()
         self._format_table()
         self._legend_flags = LegendFlags(0)
         for path in self._sorted_paths:
-            entry = self._entries[path]
-            self._legend_flags |= entry.legend_flags()
-            is_odd_row = (self.rowcount % 2) == 1
-            color_row = entry.color_row(is_odd_row, self._max_display_cols)
-            self.add_row(color_row + self.ROW_END)
+            self._add_entry(self._entries[path])
+
+    def _add_entry(self, entry: IRepoTableEntry) -> None:
+        self._legend_flags |= entry.legend_flags()
+        is_odd_row = (self.rowcount % 2) == 1
+        self.add_row(
+            entry.get_color_row(is_odd_row, self._max_display_cols) + self.ROW_END
+        )
 
     def _format_table(self) -> None:
         """Adds the target column names and formatting to the table."""
@@ -208,18 +207,25 @@ class RepoTable(pt.PrettyTable):
         self.hrules = pt.HEADER
         self.vrules = pt.NONE
 
-    def _table_str(self) -> None:
-        # If the table width is too wide, continually remove columns from the right.
-        term_width = os.get_terminal_size().columns
-        string = self.get_string()
-        while self._get_table_width() >= term_width - self.DISPLAY_WIDTH_MARGIN:
-            self._max_display_cols -= 1
-            self._generate()
-            string = self.get_string()
+    def __str__(self) -> str:
+        string = self._table_str()
+        if self._legend_flags & LegendFlags.TRACKING_AND_FLAGS:
+            string += "\n\n" + self._tracking_and_flags_legend_str()
+        if self._legend_flags & LegendFlags.REPO_STATUS:
+            string += "\n" + self._repo_status_and_legend_str()
+        if self._legend_flags & LegendFlags.MISSING_REPO:
+            string += "\n\n" + self._missing_repos_tip_str() + "\n"
         return string
 
-    def _get_table_width(self) -> int:
-        return self._compute_table_width(self._get_options({}))
+    def _table_str(self) -> None:
+        max_width = os.get_terminal_size().columns - self.DISPLAY_WIDTH_MARGIN
+        string = self.get_string()
+        while self._get_table_width() >= max_width:
+            # If the table width is too wide, continually remove columns from the right.
+            self._max_display_cols -= 1
+            self._reset_and_add_entries()
+            string = self.get_string()
+        return string
 
     def _tracking_and_flags_legend_str(self) -> str:
         separator = 5 * " "
@@ -255,11 +261,14 @@ class RepoTable(pt.PrettyTable):
     def _missing_repos_tip_str(self) -> str:
         tip = [
             "Tip: it looks like you have missing repositories. ",
-            "To initialize them execute the following commands:",
+            "To initialize them execute the following commands:\n",
             f"\tvcs import src < {self._manifest_file}",
         ]
         tip_str = "".join(tip)
         return ansi("brightmagentaf") + tip_str + ansi("reset")
+
+    def _get_table_width(self) -> int:
+        return self._compute_table_width(self._get_options({}))
 
 
 class MissingRepoTableEntry(IRepoTableEntry):
@@ -274,25 +283,25 @@ class MissingRepoTableEntry(IRepoTableEntry):
     def legend_flags(self) -> LegendFlags:
         return LegendFlags.REPO_STATUS | LegendFlags.MISSING_REPO
 
-    def color_status(self) -> str:
+    def get_color_status(self) -> str:
         return ansi("redf") + "D"
 
-    def color_path(self) -> str:
+    def get_color_repository(self) -> str:
         return ansi("redf") + self._path
 
-    def color_branch(self) -> str:
+    def get_color_branch(self) -> str:
         return ansi("redf") + "ABSENT FROM FILESYSTEM"
 
-    def color_track(self) -> str:
+    def get_color_track(self) -> str:
         return ""
 
-    def color_flags(self) -> str:
+    def get_color_flags(self) -> str:
         return ""
 
-    def color_tag(self) -> str:
+    def get_color_tag(self) -> str:
         return ""
 
-    def color_hash(self) -> str:
+    def get_color_hash(self) -> str:
         return ""
 
 
@@ -331,17 +340,17 @@ class ExistingRepoTableEntry(IRepoTableEntry):
             flags = flags | LegendFlags.REPO_STATUS
         return flags
 
-    def color_status(self) -> str:
+    def get_color_status(self) -> str:
         return {
             Status.NOMINAL: ansi("brightblackf") + "c",
             Status.UNTRACKED: ansi("brightyellowf") + "U",
         }[self._status]
 
-    def color_path(self) -> str:
+    def get_color_repository(self) -> str:
         foreground = ansi("brightcyanf") if self.is_significant() else ansi("whitef")
         return foreground + self._path
 
-    def color_branch(self) -> str:
+    def get_color_branch(self) -> str:
         foreground = ansi("white")
         if not self._is_valid_branch_name(self._results.local_branch):
             foreground = ansi("redf")
@@ -351,7 +360,7 @@ class ExistingRepoTableEntry(IRepoTableEntry):
             foreground = ansi("brightblackf")
         return foreground + self._results.local_branch
 
-    def color_track(self) -> str:
+    def get_color_track(self) -> str:
         return {
             Tracking.EQUAL: ansi("brightblackf") + "eq",
             Tracking.LOCAL: ansi("whitef") + "local",
@@ -368,15 +377,15 @@ class ExistingRepoTableEntry(IRepoTableEntry):
             Tracking.ERR: ansi("redf") + "ERR",
         }[self._tracking]
 
-    def color_flags(self) -> str:
+    def get_color_flags(self) -> str:
         foreground = ansi("redf") if self._is_dirty() else ansi("whitef")
         return foreground + self._flags
 
-    def color_tag(self) -> str:
+    def get_color_tag(self) -> str:
         foreground = ansi("brightmagentaf")
         return foreground + self._results.tag
 
-    def color_hash(self) -> str:
+    def get_color_hash(self) -> str:
         foreground = ansi("brightblackf")
         return foreground + self._results.hash
 
