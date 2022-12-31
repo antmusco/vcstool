@@ -64,7 +64,12 @@ class SvnClient(VcsClientBase):
         }
 
     def compare(self, command):
-        return self.path
+        return {
+            'cmd': 'compare',
+            'cwd': self.path,
+            'output': 'svn compare not yet supported',
+            'returncode': 1
+        }
 
     def custom(self, command):
         self._check_executable()

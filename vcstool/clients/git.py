@@ -3,7 +3,7 @@ from shutil import which
 import subprocess
 
 from vcstool.executor import USE_COLOR
-from vcstool.results import CompareResults
+from vcstool.outputs import CompareOutput
 
 from .vcs_base import VcsClientBase
 from ..util import rmtree
@@ -118,7 +118,7 @@ class GitClient(VcsClientBase):
         return {
             'cmd': 'compare',
             'cwd': self.path,
-            'output': CompareResults(
+            'output': CompareOutput(
                 local_branch=local_branch,
                 remote_branch=remote_branch,
                 tag=self._get_tag(local_branch),

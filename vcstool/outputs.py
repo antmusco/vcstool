@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 
 @dataclass
-class CompareResults:
-    """Simple dataclass which contains the results of the CompareCommand."""
+class CompareOutput:
+    """Simple dataclass which contains the output of the CompareCommand."""
 
     local_branch: str
     remote_branch: str

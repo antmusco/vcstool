@@ -11,7 +11,7 @@ from vcstool.crawler import find_repositories
 from vcstool.executor import ansi, execute_jobs, generate_jobs
 from vcstool.commands.import_ import get_repositories
 from vcstool.streams import set_streams
-from vcstool.results import CompareResults
+from vcstool.outputs import CompareOutput
 
 from .command import add_common_arguments
 from .command import Command
@@ -22,7 +22,7 @@ class CompareCommand(Command):
     command = "compare"
     help = "Compare working copy to the repository list file"
 
-    def __init__(self, args: Dict[str, Any]) -> None:
+    def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
         self.progress = args.progress
         self.workers = args.workers
@@ -37,28 +37,32 @@ class CompareCommand(Command):
             "--input",
             type=str,
             default="workspace.repos",
-            help="Path to the .repos file for the workspace.",
+            help="Path to the repository list file for the workspace.",
         )
         group.add_argument(
-            "-p", "--progress", action="store_true", default=False, help="Show progress"
+            "-p",
+            "--progress",
+            action="store_true",
+            default=False,
+            help="Show progress of the jobs during execution.",
         )
         group.add_argument(
             "-n",
             "--nested",
             action="store_true",
             default=False,
-            help="Search for nested repositories",
+            help="Search the workspace for nested repositories.",
         )
         group.add_argument(
             "-s",
             "--significant",
             action="store_true",
             default=False,
-            help="Only show significant repos",
+            help="Only show significant repos.",
         )
         return parser
 
-    def execute(self) -> Dict[str, Any]:
+    def execute(self) -> List[Dict[str, Any]]:
         """Convenience method which executes this CompareCommand using a number of workers."""
         clients = find_repositories(self.paths, nested=self.nested)
         jobs = generate_jobs(clients, self)
@@ -70,22 +74,105 @@ class CompareCommand(Command):
         )
 
 
-class LegendFlags(IntFlag):
-    """Flags used to indicate which items in the legend should be displayed."""
+class Legend:
+    """Namespace containing symbols used in the CompareTable."""
 
-    MISSING_REPO = auto()
-    TRACKING_AND_FLAGS = auto()
-    REPO_STATUS = auto()
+    # fmt: off
+    SUBMODULE        = "c"
+    MISSING          = "M"
+    SUPER_PROJECT    = "s"
+    REPO_NOT_TRACKED = "U"
+    BEHIND           = "<"
+    AHEAD            = ">"
+    DIVERGED         = "<>"
+    UNSTAGED         = "*"
+    STAGED           = "+"
+    UNTRACKED        = "%"
+    STASHES          = "$"
+    # fmt: on
+
+    @classmethod
+    def get_symbol_description(cls, symbol: str) -> str:
+        """Returns a text description of the specified symbol"""
+        # fmt: off
+        return {
+            cls.SUBMODULE        : f"{symbol} submodule",
+            cls.MISSING          : f"{symbol} missing",
+            cls.SUPER_PROJECT    : f"{symbol} super project",
+            cls.REPO_NOT_TRACKED : f"{symbol} repo not tracked",
+            cls.BEHIND           : f"{symbol} behind",
+            cls.AHEAD            : f"{symbol} ahead",
+            cls.DIVERGED         : f"{symbol} diverged",
+            cls.UNSTAGED         : f"{symbol} unstaged",
+            cls.STAGED           : f"{symbol} staged",
+            cls.UNTRACKED        : f"{symbol} untracked",
+            cls.STASHES          : f"{symbol} stashes",
+        }[symbol]
+        # fmt: on
+
+    class Flags(IntFlag):
+        """Flags used to indicate which items in the legend should be displayed."""
+
+        MISSING_REPO = auto()
+        VCS_TRACKING_STATUS = auto()
+        REPO_STATUS = auto()
+
+    @classmethod
+    def get_string(cls, flags: Flags, max_width: int, manifest_file: str) -> str:
+        """Returns the legend as a string based on flags."""
+        legend = "\n"
+        if flags & cls.Flags.VCS_TRACKING_STATUS:
+            vcs_tracking_symbols = [
+                cls.BEHIND,
+                cls.AHEAD,
+                cls.DIVERGED,
+                cls.UNSTAGED,
+                cls.STAGED,
+                cls.UNTRACKED,
+                cls.STASHES,
+            ]
+            legend += cls._legend_from_symbols(vcs_tracking_symbols, max_width) + "\n"
+        if flags & cls.Flags.REPO_STATUS:
+            repo_status_symbols = [
+                cls.SUBMODULE,
+                cls.MISSING,
+                cls.SUPER_PROJECT,
+                cls.REPO_NOT_TRACKED,
+            ]
+            legend += cls._legend_from_symbols(repo_status_symbols, max_width) + "\n"
+        if flags & cls.Flags.MISSING_REPO:
+            legend += "\n" + cls._missing_repos_tip_str(manifest_file) + "\n"
+        # Remove the extra newline if no legend is needed.
+        return legend if legend != "\n" else ""
+
+    @classmethod
+    def _legend_from_symbols(cls, symbols: List[str], max_width: int) -> str:
+        separator = 5 * " "
+        legend = separator.join(map(cls.get_symbol_description, symbols))
+        if len(legend) < max_width:
+            margin_length = int((max_width - len(legend)) / 2)
+            legend = (" " * margin_length) + legend
+        return ansi("brightblackf") + legend + ansi("reset")
+
+    @staticmethod
+    def _missing_repos_tip_str(manifest_file: str) -> str:
+        tip = [
+            "Tip: it looks like you have missing repositories. ",
+            "To initialize them execute the following commands:\n",
+            f"\tvcs import src < {manifest_file}",
+        ]
+        tip_str = "".join(tip)
+        return ansi("brightmagentaf") + tip_str + ansi("reset")
 
 
-class Status(IntEnum):
+class RepoStatus(IntEnum):
     """Enum indicating the status of the repository."""
 
     NOMINAL = 0
     UNTRACKED = 1
 
 
-class Tracking(IntEnum):
+class VcsTrackingStatus(IntEnum):
     """Enum indicating the tracking status of the repository."""
 
     EQUAL = 0
@@ -93,47 +180,47 @@ class Tracking(IntEnum):
     LOCAL_BEHIND_REMOTE = 2
     LOCAL_AHEAD_OF_REMOTE = 3
     DIVERGED = 4
-    ERR = 5
+    ERROR = 5
 
 
-class IRepoTableEntry(abc.ABC):
-    """Interface used to implement an entry (row) in the RepoTable."""
+class ICompareTableEntry(abc.ABC):
+    """Interface used to implement an entry (row) in the CompareTable."""
 
     HEADERS = ["S", "Repository", "Branch", "Trk", "Flags", "Tag", "Hash"]
 
-    def get_color_row(self, is_odd_row: bool, max_display_cols: int) -> List[str]:
+    def get_color_row(self, is_odd_row: bool, num_cols: int) -> List[str]:
         """Returns a formatted and colored row representing this entry."""
         # The order of these entries should match the order of HEADERS.
-        cells = [
-            self.get_color_status(),
+        row = [
+            self.get_color_repo_status(),
             self.get_color_repository(),
             self.get_color_branch(),
             self.get_color_track(),
-            self.get_color_flags(),
+            self.get_color_vcs_tracking_flags(),
             self.get_color_tag(),
             self.get_color_hash(),
         ]
-        cells = self._wrap_cells_with_background_color(cells, is_odd_row)
+        row = self._wrap_row_with_background_color(row, is_odd_row)
         # max_dispaly_cols is used to hide columns if the terminal is not wide enough to display
         # the full table.
-        return cells[:max_display_cols]
+        return row[:num_cols]
 
     @staticmethod
-    def _wrap_cells_with_background_color(cells: List[str], is_odd_row: bool):
+    def _wrap_row_with_background_color(row: List[str], is_odd_row: bool):
         reset = ansi("reset")
         background = ansi("grey4b") if is_odd_row else reset
-        return [background + cell + reset + background for cell in cells]
+        return [background + item + reset + background for item in row]
 
     @abc.abstractmethod
     def is_significant(self) -> bool:
         return NotImplemented
 
     @abc.abstractmethod
-    def legend_flags(self) -> LegendFlags:
+    def legend_flags(self) -> Legend.Flags:
         return NotImplemented
 
     @abc.abstractmethod
-    def get_color_status(self) -> str:
+    def get_color_repo_status(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
@@ -149,7 +236,7 @@ class IRepoTableEntry(abc.ABC):
         return NotImplemented
 
     @abc.abstractmethod
-    def get_color_flags(self) -> str:
+    def get_color_vcs_tracking_flags(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
@@ -161,45 +248,45 @@ class IRepoTableEntry(abc.ABC):
         return NotImplemented
 
 
-class RepoTable(pt.PrettyTable):
-    """PrettyTable extension which displays various useful information related to repositories in
-    the workspace."""
+class CompareTable(pt.PrettyTable):
+    """PrettyTable extension which displays a table describing the state of the workspace."""
 
-    # Dummy column for display formatting purposes.
-    HEADER_END = [""]
-    ROW_END = [ansi("reset")]
-
-    DISPLAY_WIDTH_MARGIN = 10
-
-    def __init__(self, entries: Dict[str, IRepoTableEntry], manifest_file: str) -> None:
+    def __init__(
+        self,
+        entries: Dict[str, ICompareTableEntry],
+        manifest_file: str,
+        max_width: int = os.get_terminal_size().columns,
+    ) -> None:
         super().__init__()
+
         self._entries = entries
         self._manifest_file = manifest_file
-        self._sorted_paths = sorted(entries.keys())
-        self._max_display_cols = len(IRepoTableEntry.HEADERS)
-        self._legend_flags: LegendFlags
-        # Initial table generation:
-        self._reset_and_add_entries()
+        self._legend_flags = Legend.Flags(0)
 
-    def _reset_and_add_entries(self) -> None:
+        # Initial generation.
+        num_cols = len(ICompareTableEntry.HEADERS)
+        self._reset_and_add_entries(num_cols)
+
+        # If the table width is too wide, continually remove columns from the right.
+        # TODO(amusco): More efficient way to do this?
+        DISPLAY_WIDTH_MARGIN = 10
+        max_width -= DISPLAY_WIDTH_MARGIN
+        while self._table_width() >= max_width:
+            num_cols -= 1
+            self._reset_and_add_entries(num_cols)
+
+    def _reset_and_add_entries(self, num_cols: int) -> None:
         self.clear()
-        self._format_table()
-        self._legend_flags = LegendFlags(0)
-        for path in self._sorted_paths:
-            self._add_entry(self._entries[path])
+        self._format_table(num_cols)
+        self._legend_flags = Legend.Flags(0)
+        for path in sorted(self._entries.keys()):
+            self._add_entry(self._entries[path], num_cols)
 
-    def _add_entry(self, entry: IRepoTableEntry) -> None:
-        self._legend_flags |= entry.legend_flags()
-        is_odd_row = (self.rowcount % 2) == 1
-        self.add_row(
-            entry.get_color_row(is_odd_row, self._max_display_cols) + self.ROW_END
-        )
-
-    def _format_table(self) -> None:
+    def _format_table(self, num_cols: int) -> None:
         """Adds the target column names and formatting to the table."""
-        self.field_names = (
-            IRepoTableEntry.HEADERS[: self._max_display_cols] + self.HEADER_END
-        )
+        # Dummy column for display formatting purposes.
+        DUMMY_END_HEADER = [""]
+        self.field_names = ICompareTableEntry.HEADERS[:num_cols] + DUMMY_END_HEADER
         # Default left alignment for all headers
         for header in self.field_names:
             self.align[header] = "l"
@@ -207,72 +294,28 @@ class RepoTable(pt.PrettyTable):
         self.hrules = pt.HEADER
         self.vrules = pt.NONE
 
-    def __str__(self) -> str:
-        string = self._table_str()
-        if self._legend_flags & LegendFlags.TRACKING_AND_FLAGS:
-            string += "\n\n" + self._tracking_and_flags_legend_str()
-        if self._legend_flags & LegendFlags.REPO_STATUS:
-            string += "\n" + self._repo_status_and_legend_str()
-        if self._legend_flags & LegendFlags.MISSING_REPO:
-            string += "\n\n" + self._missing_repos_tip_str() + "\n"
-        return string
+    def _add_entry(self, entry: ICompareTableEntry, num_cols: int) -> None:
+        # Dummy column for display formatting purposes.
+        DUMMY_END_ROW = [ansi("reset")]
+        self._legend_flags |= entry.legend_flags()
+        is_odd_row = (self.rowcount % 2) == 1
+        self.add_row(entry.get_color_row(is_odd_row, num_cols) + DUMMY_END_ROW)
 
-    def _table_str(self) -> None:
-        max_width = os.get_terminal_size().columns - self.DISPLAY_WIDTH_MARGIN
-        string = self.get_string()
-        while self._get_table_width() >= max_width:
-            # If the table width is too wide, continually remove columns from the right.
-            self._max_display_cols -= 1
-            self._reset_and_add_entries()
-            string = self.get_string()
-        return string
-
-    def _tracking_and_flags_legend_str(self) -> str:
-        separator = 5 * " "
-        legend = [
-            "< behind",
-            "> ahead",
-            "<> diverged",
-            "* unstaged",
-            "+ staged",
-            "% untracked",
-            "$ stashes",
-        ]
-        legend_str = separator.join(legend)
-        table_width = self._get_table_width()
-        if table_width > len(legend_str):
-            legend_str = " " * int((table_width - len(legend_str)) / 2) + legend_str
-        return ansi("brightblackf") + legend_str + ansi("reset")
-
-    def _repo_status_and_legend_str(self) -> str:
-        separator = 5 * " "
-        legend = [
-            "c submodule",
-            "M missing",
-            "s super project",
-            "U not tracked",
-        ]
-        legend_str = separator.join(legend)
-        table_width = self._get_table_width()
-        if table_width > len(legend_str):
-            legend_str = " " * int((table_width - len(legend_str)) / 2) + legend_str
-        return ansi("brightblackf") + legend_str + ansi("reset")
-
-    def _missing_repos_tip_str(self) -> str:
-        tip = [
-            "Tip: it looks like you have missing repositories. ",
-            "To initialize them execute the following commands:\n",
-            f"\tvcs import src < {self._manifest_file}",
-        ]
-        tip_str = "".join(tip)
-        return ansi("brightmagentaf") + tip_str + ansi("reset")
-
-    def _get_table_width(self) -> int:
+    def _table_width(self) -> int:
+        # Need to call get_string() so that _compute_table_width() works properly.
+        self.get_string()
         return self._compute_table_width(self._get_options({}))
 
+    def __str__(self) -> str:
+        return self.get_string() + Legend.get_string(
+            flags=self._legend_flags,
+            max_width=self._table_width(),
+            manifest_file=self._manifest_file,
+        )
 
-class MissingRepoTableEntry(IRepoTableEntry):
-    """Entry for a repo which is specified in the manifest but missing from the filesystem."""
+
+class MissingManifestEntry(ICompareTableEntry):
+    """Entry for a repo which is specified in the manifest but not included in the CompareOutput."""
 
     def __init__(self, path: str) -> None:
         self._path = path
@@ -280,11 +323,11 @@ class MissingRepoTableEntry(IRepoTableEntry):
     def is_significant(self) -> bool:
         return True
 
-    def legend_flags(self) -> LegendFlags:
-        return LegendFlags.REPO_STATUS | LegendFlags.MISSING_REPO
+    def legend_flags(self) -> Legend.Flags:
+        return Legend.Flags.REPO_STATUS | Legend.Flags.MISSING_REPO
 
-    def get_color_status(self) -> str:
-        return ansi("redf") + "D"
+    def get_color_repo_status(self) -> str:
+        return ansi("redf") + Legend.MISSING
 
     def get_color_repository(self) -> str:
         return ansi("redf") + self._path
@@ -295,7 +338,7 @@ class MissingRepoTableEntry(IRepoTableEntry):
     def get_color_track(self) -> str:
         return ""
 
-    def get_color_flags(self) -> str:
+    def get_color_vcs_tracking_flags(self) -> str:
         return ""
 
     def get_color_tag(self) -> str:
@@ -305,46 +348,53 @@ class MissingRepoTableEntry(IRepoTableEntry):
         return ""
 
 
-class ExistingRepoTableEntry(IRepoTableEntry):
-    """Entry for a repo which is discovered on within the workspace."""
+class CompareOutputEntry(ICompareTableEntry):
+    """Entry for a repo which is discovered by the CompareCommand, but may be missing from the
+    manifest (i.e. `manifest_version is None`)"""
 
     def __init__(
-        self, path: str, results: CompareResults, manifest_branch: Optional[str]
+        self,
+        path: str,
+        compare_output: CompareOutput,
+        manifest_version: Optional[str] = None,
     ) -> None:
         self._path = path
-        self._results = results
-        self._manifest_branch = manifest_branch
-        self._is_current = self._results.local_branch == self._manifest_branch
+        self._compare_output = compare_output
+        self._manifest_version = manifest_version
+        self._is_current_with_manifest = self._manifest_version in [
+            self._compare_output.local_branch,
+            self._compare_output.hash,
+        ]
 
-        self._flags = self._get_flags()
-        self._status = self._get_update_status()
-        self._tracking = self._get_tracking_status()
+        self._vcs_tracking_flags = self._get_vcs_tracking_flags()
+        self._repo_status = self._get_repo_status()
+        self._vcs_tracking_status = self._get_tracking_status()
 
     def is_significant(self) -> bool:
         return any(
             [
                 self._is_dirty(),
-                # is empty git repo?
-                # is in manifest but not present?
-                self._tracking != Tracking.EQUAL,
+                self._vcs_tracking_status != VcsTrackingStatus.EQUAL,
+                # TODO(amusco): is empty git repo?
             ]
         )
 
-    def legend_flags(self) -> LegendFlags:
-        flags = LegendFlags(0)
-        if self._tracking != Tracking.EQUAL:
-            flags = flags | LegendFlags.TRACKING_AND_FLAGS
-        if self._flags.strip() != "":
-            flags = flags | LegendFlags.TRACKING_AND_FLAGS
-        if self._status != Status.NOMINAL:
-            flags = flags | LegendFlags.REPO_STATUS
+    def legend_flags(self) -> Legend.Flags:
+        flags = Legend.Flags(0)
+        if (
+            self._vcs_tracking_status != VcsTrackingStatus.EQUAL
+            or self._vcs_tracking_flags.strip() != ""
+        ):
+            flags |= Legend.Flags.VCS_TRACKING_STATUS
+        if self._repo_status != RepoStatus.NOMINAL:
+            flags |= Legend.Flags.REPO_STATUS
         return flags
 
-    def get_color_status(self) -> str:
+    def get_color_repo_status(self) -> str:
         return {
-            Status.NOMINAL: ansi("brightblackf") + "c",
-            Status.UNTRACKED: ansi("brightyellowf") + "U",
-        }[self._status]
+            RepoStatus.NOMINAL: ansi("brightblackf") + Legend.SUBMODULE,
+            RepoStatus.UNTRACKED: ansi("brightyellowf") + Legend.REPO_NOT_TRACKED,
+        }[self._repo_status]
 
     def get_color_repository(self) -> str:
         foreground = ansi("brightcyanf") if self.is_significant() else ansi("whitef")
@@ -352,63 +402,67 @@ class ExistingRepoTableEntry(IRepoTableEntry):
 
     def get_color_branch(self) -> str:
         foreground = ansi("white")
-        if not self._is_valid_branch_name(self._results.local_branch):
+        if not self._is_valid_branch_name(self._compare_output.local_branch):
             foreground = ansi("redf")
-        elif self._tracking not in [Tracking.EQUAL, Tracking.LOCAL]:
+        elif self._vcs_tracking_status not in [
+            VcsTrackingStatus.EQUAL,
+            VcsTrackingStatus.LOCAL,
+        ]:
             foreground = ansi("redf")
-        elif self._is_current:
+        elif self._is_current_with_manifest:
             foreground = ansi("brightblackf")
-        return foreground + self._results.local_branch
+        return foreground + self._compare_output.local_branch
 
     def get_color_track(self) -> str:
+        yellow = ansi("brightyellowf")
         return {
-            Tracking.EQUAL: ansi("brightblackf") + "eq",
-            Tracking.LOCAL: ansi("whitef") + "local",
-            Tracking.LOCAL_BEHIND_REMOTE: (
-                ansi("brightyellowf") + f"<({self._results.behind})"
+            VcsTrackingStatus.EQUAL: ansi("brightblackf") + "eq",
+            VcsTrackingStatus.LOCAL: ansi("whitef") + "local",
+            VcsTrackingStatus.LOCAL_BEHIND_REMOTE: (
+                yellow + f"{Legend.BEHIND}({self._compare_output.behind})"
             ),
-            Tracking.LOCAL_AHEAD_OF_REMOTE: (
-                ansi("brightyellowf") + f">({self._results.ahead})"
+            VcsTrackingStatus.LOCAL_AHEAD_OF_REMOTE: (
+                yellow + f"{Legend.AHEAD}({self._compare_output.ahead})"
             ),
-            Tracking.DIVERGED: (
-                ansi("brightyellowf")
-                + f"<>({self._results.ahead}, {self._results.behind})"
+            VcsTrackingStatus.DIVERGED: (
+                yellow
+                + f"{Legend.DIVERGED}({self._compare_output.ahead}, {self._compare_output.behind})"
             ),
-            Tracking.ERR: ansi("redf") + "ERR",
-        }[self._tracking]
+            VcsTrackingStatus.ERROR: ansi("redf") + "ERR",
+        }[self._vcs_tracking_status]
 
-    def get_color_flags(self) -> str:
+    def get_color_vcs_tracking_flags(self) -> str:
         foreground = ansi("redf") if self._is_dirty() else ansi("whitef")
-        return foreground + self._flags
+        return foreground + self._vcs_tracking_flags
 
     def get_color_tag(self) -> str:
         foreground = ansi("brightmagentaf")
-        return foreground + self._results.tag
+        return foreground + self._compare_output.tag
 
     def get_color_hash(self) -> str:
         foreground = ansi("brightblackf")
-        return foreground + self._results.hash
+        return foreground + self._compare_output.hash
 
-    def _get_update_status(self) -> None:
-        if self._manifest_branch is None:
-            return Status.UNTRACKED
-        return Status.NOMINAL
+    def _get_repo_status(self) -> None:
+        if self._manifest_version is None:
+            return RepoStatus.UNTRACKED
+        return RepoStatus.NOMINAL
 
-    def _get_flags(self) -> str:
+    def _get_vcs_tracking_flags(self) -> str:
         flags = ""
-        flags += "*" if self._results.unstaged_changes else " "
-        flags += "+" if self._results.staged_changes else " "
-        flags += "%" if self._results.untracked_files else " "
-        flags += "$" if self._results.stashes else " "
+        flags += f"{Legend.UNSTAGED}" if self._compare_output.unstaged_changes else " "
+        flags += f"{Legend.STAGED}" if self._compare_output.staged_changes else " "
+        flags += f"{Legend.UNTRACKED}" if self._compare_output.untracked_files else " "
+        flags += f"{Legend.STASHES}" if self._compare_output.stashes else " "
         return flags
 
     def _is_dirty(self) -> bool:
         # Note: stashes do not count towards 'dirtiness'.
         return any(
             [
-                self._results.unstaged_changes,
-                self._results.staged_changes,
-                self._results.untracked_files,
+                self._compare_output.unstaged_changes,
+                self._compare_output.staged_changes,
+                self._compare_output.untracked_files,
             ]
         )
 
@@ -431,62 +485,81 @@ class ExistingRepoTableEntry(IRepoTableEntry):
                 return True
         return False
 
-    def _get_tracking_status(self) -> Tracking:
-        if not self._results.remote_branch:
-            return Tracking.LOCAL
-        ahead, behind = self._results.ahead, self._results.behind
+    def _get_tracking_status(self) -> VcsTrackingStatus:
+        if not self._compare_output.remote_branch:
+            return VcsTrackingStatus.LOCAL
+        ahead, behind = self._compare_output.ahead, self._compare_output.behind
         if ahead == 0 and behind == 0:
-            return Tracking.EQUAL
+            return VcsTrackingStatus.EQUAL
         if ahead == 0 and behind > 0:
-            return Tracking.LOCAL_BEHIND_REMOTE
+            return VcsTrackingStatus.LOCAL_BEHIND_REMOTE
         if ahead > 0 and behind == 0:
-            return Tracking.LOCAL_AHEAD_OF_REMOTE
+            return VcsTrackingStatus.LOCAL_AHEAD_OF_REMOTE
         if ahead > 0 and behind > 0:
-            return Tracking.DIVERGED
-        return Tracking.ERR
+            return VcsTrackingStatus.DIVERGED
+        return VcsTrackingStatus.ERROR
 
 
-def get_manifest_branch(manifest_repos: Dict[str, Dict[str, Any]], path: str) -> str:
-    if path not in manifest_repos:
+def get_manifest_version(
+    manifest_per_path: Dict[str, Dict[str, str]], path: str
+) -> str:
+    if path not in manifest_per_path:
         return None
-    return manifest_repos[path].get("version", None)
+    return manifest_per_path[path].get("version", None)
 
 
 def generate_table_entries(
-    compare_results: Dict[str, Any],
-    manifest_repos: Dict[str, Dict[str, Any]],
-    root_path: str,
+    compare_output_per_path: Dict[str, CompareOutput],
+    manifest_per_path: Dict[str, Dict[str, str]],
     significant_only: bool,
-) -> Dict[str, IRepoTableEntry]:
+) -> Dict[str, ICompareTableEntry]:
     """Generates a dict of table entries using the output of the CompareCommand and the parsed
     manifest file."""
 
-    entries: Dict[str, IRepoTableEntry] = {}
-    existing_paths = set()
-    # Add entries found on the filesystem (but may be mssing from the manifest).
-    for result in compare_results:
-        # Strip the input path from the client path
-        path = result["cwd"].replace(f"{root_path}/", "")
-        existing_paths.add(path)
-        manifest_branch = get_manifest_branch(manifest_repos, path)
-        entry = ExistingRepoTableEntry(path, result["output"], manifest_branch)
+    entries: Dict[str, ICompareTableEntry] = {}
+    # Add entries found in the CompareCommand (but may be mssing from the manifest).
+    for path, compare_output in compare_output_per_path.items():
+        manifest_version = get_manifest_version(manifest_per_path, path)
+        entry = CompareOutputEntry(path, compare_output, manifest_version)
         if significant_only and not entry.is_significant():
             continue
         entries[path] = entry
     # Add entries which exist in the manifest but are missing from the filesystem.
-    for path in manifest_repos:
-        if path not in existing_paths:
-            entries[path] = MissingRepoTableEntry(path)
+    compare_output_paths = set(compare_output_per_path.keys())
+    for path in manifest_per_path:
+        if path not in compare_output_paths:
+            entries[path] = MissingManifestEntry(path)
     return entries
 
 
-def read_repos_from_manifest_file(manifest_file_path: str) -> Dict[str, Dict[str, Any]]:
+def print_err(msg: str):
+    print(ansi("redf") + msg + ansi("reset"), file=sys.stderr)
+
+
+def read_repos_from_manifest_file(manifest_file: str) -> Dict[str, Dict[str, Any]]:
     try:
-        with open(manifest_file_path, "r", encoding="utf-8") as manifest_file:
-            return get_repositories(manifest_file)
+        with open(manifest_file, "r", encoding="utf-8") as infile:
+            return get_repositories(infile)
     except RuntimeError as ex:
-        print(ansi("redf") + str(ex) + ansi("reset"), file=sys.stderr)
+        print_err(str(ex))
     return None
+
+
+def filter_compare_output_per_path(
+    results: List[Dict[str, Any]], root_path: str
+) -> Dict[str, CompareOutput]:
+    """Removes entries in results which failed and extracts the CompareOutput from the 'output'
+    attribute, returning a dict of output_per_path."""
+    output_per_path: Dict[str, CompareOutput] = {}
+    for result in results:
+        path = result["cwd"].replace(f"{root_path}/", "")
+        output = result["output"]
+        if result["returncode"] != 0:
+            print_err(f"Compare command failed for repo {path}: {output}")
+            continue
+        assert isinstance(output, CompareOutput)
+        output_per_path[path] = output
+    return output_per_path
 
 
 def main(args=None, stdout=None, stderr=None) -> None:
@@ -498,19 +571,23 @@ def main(args=None, stdout=None, stderr=None) -> None:
     )
     args = parser.parse_args(args)
 
-    manifest_file = args.input
-    manifest_repos = read_repos_from_manifest_file(manifest_file)
-    if manifest_repos is None:
+    manifest_per_path = read_repos_from_manifest_file(manifest_file=args.input)
+    if manifest_per_path is None:
         return 1
 
-    compare_results = CompareCommand(args).execute()
+    result = CompareCommand(args).execute()
+    compare_output_per_path = filter_compare_output_per_path(
+        result, root_path=args.path
+    )
+    if len(compare_output_per_path) == 0:
+        return 1
+
     entries = generate_table_entries(
-        compare_results,
-        manifest_repos,
-        root_path=args.path,
+        compare_output_per_path,
+        manifest_per_path,
         significant_only=args.significant,
     )
-    print(RepoTable(entries, manifest_file))
+    print(CompareTable(entries, manifest_file=args.input))
     return 0
 
 

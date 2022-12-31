@@ -29,12 +29,11 @@ class BzrClient(VcsClientBase):
 
     def compare(self, command):
         return {
-            'cmd': '',
+            'cmd': 'compare',
             'cwd': self.path,
-            'output': 'test',
-            'returncode': 0
+            'output': 'bzr compare not yet supported',
+            'returncode': 1
         }
-        return self.path
 
     def custom(self, command):
         self._check_executable()
