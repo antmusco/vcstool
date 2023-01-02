@@ -75,15 +75,11 @@ class GitClient(VcsClientBase):
         """Returns an (int, int) tuple corresponding to the (ahead, behind) commit numbers."""
         if not remote or not remote_branch:
             return (0, 0)
-        # remove leading "refs/heads/"
-        prefix = 'refs/heads/'
-        if remote_branch.startswith(prefix):
-            remote_branch = remote_branch[len(prefix):]
         result = self.custom(GitCustomCommand(['rev-list', '--left-right', '--count',
                                                f'{local_branch}...{remote}/{remote_branch}']))
         # If the command failed, just return an error sentinel.
         if result['returncode']:
-            return (-1, -1)
+            return (None, None)
         # Parse out the ints and return as a tuple
         return (int(i) for i in result['output'].strip().split())
 
@@ -93,15 +89,23 @@ class GitClient(VcsClientBase):
 
     def _get_remote_branch(self, local_branch: str):
         result =  self.custom(GitCustomCommand(['config', f'branch.{local_branch}.merge']))
-        return result['output'] if result['returncode'] == 0 else ''
+        remote_branch = result['output'] if result['returncode'] == 0 else ''
+        REMOVE_PREFIX = 'refs/heads/'
+        if remote_branch.startswith(REMOVE_PREFIX):
+            remote_branch = remote_branch[len(REMOVE_PREFIX):]
+        return remote_branch
 
     def _get_tag(self, local_branch : str):
         result =  self.custom(GitCustomCommand(['describe', '--tags', '--abbrev=0', '--exact-match',
                                                 local_branch]))
         return result['output'].strip() if result['returncode'] == 0 else ''
 
-    def _get_hash(self, local_branch : str):
-        result = self.custom(GitCustomCommand(['rev-parse', local_branch]))
+    def _get_hash(self, branch: str, remote: str = ""):
+        if branch == "":
+            return ""
+        if remote != "":
+            branch = f"{remote}/{branch}"
+        result = self.custom(GitCustomCommand(['rev-parse', branch]))
         return result['output'].strip() if result['returncode'] == 0 else ''
 
     def compare(self, command):
@@ -122,7 +126,8 @@ class GitClient(VcsClientBase):
                 local_branch=local_branch,
                 remote_branch=remote_branch,
                 tag=self._get_tag(local_branch),
-                hash=self._get_hash(local_branch),
+                local_hash=self._get_hash(local_branch),
+                remote_hash=self._get_hash(remote_branch, remote),
                 remote=remote,
                 ahead=ahead,
                 behind=behind,

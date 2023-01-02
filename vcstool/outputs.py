@@ -8,7 +8,8 @@ class CompareOutput:
     local_branch: str
     remote_branch: str
     tag: str
-    hash: str
+    local_hash: str
+    remote_hash: str
     remote: str
     ahead: int
     behind: int
