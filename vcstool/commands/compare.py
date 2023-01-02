@@ -81,26 +81,26 @@ class CompareCommand(Command):
 class Colors:
     """Namespace containing colors used throughout the CompareTable"""
 
-    RESET = ansi("reset")
-    ROW_BACKGROUND_ODD = ansi("grey4b")
-    ROW_BACKGROUND_EVEN = ansi("reset")
-    LEGEND = ansi("brightblackf")
-    TAG = ansi("brightmagentaf")
-    TIP = ansi("brightmagentaf")
-    MISSING_REPO = ansi("redf")
-    REPO_STATUS_NOMINAL = ansi("brightblackf")
-    REPO_STATUS_UNTRACKED = ansi("brightyellowf")
-    REPO_STATUS_DIRTY = ansi("redf")
-    REPO_STATUS_CLEAN = ""
-    SIGNIFICANT = ansi("brightcyanf")
-    INVALID_BRANCH_NAME = ansi("redf")
-    VCS_TRACKING_DIFFERENT = ansi("redf")
-    VCS_TRACKING_CURRENT = ansi("brightblackf")
-    VCS_TRACKING_LOCAL = ""
-    VCS_TRACKING_EQUAL = ansi("brightblackf")
-    VCS_TRACKING_BEHIND = ansi("brightyellowf")
-    VCS_TRACKING_AHEAD = ansi("brightyellowf")
-    VCS_TRACKING_DIVERGED = ansi("brightyellowf")
+    RESET                    = ansi("reset")
+    ROW_BACKGROUND_ODD       = ansi("reset")
+    ROW_BACKGROUND_EVEN      = ansi("grey4b")
+    LEGEND                   = ansi("brightblackf")
+    TAG                      = ansi("brightmagentaf")
+    TIP                      = ansi("brightmagentaf")
+    MISSING_REPO             = ansi("redf")
+    REPO_STATUS_NOMINAL      = ansi("brightblackf")
+    REPO_STATUS_UNTRACKED    = ansi("brightyellowf")
+    REPO_STATUS_DIRTY        = ansi("brightyellowf")
+    REPO_STATUS_CLEAN        = ""
+    SIGNIFICANT              = ansi("brightcyanf")
+    INVALID_BRANCH_NAME      = ansi("redf")
+    VCS_TRACKING_DIFFERENT   = ansi("brightyellowf")
+    VCS_TRACKING_CURRENT     = ansi("brightblackf")
+    VCS_TRACKING_LOCAL       = ""
+    VCS_TRACKING_EQUAL       = ansi("brightblackf")
+    VCS_TRACKING_BEHIND      = ansi("brightyellowf")
+    VCS_TRACKING_AHEAD       = ansi("brightyellowf")
+    VCS_TRACKING_DIVERGED    = ansi("brightyellowf")
     MANIFEST_VERSION_NOMINAL = ansi("brightblackf")
 
     ERROR = ansi("redf")
@@ -221,24 +221,20 @@ class ICompareTableEntry(abc.ABC):
     STATUS_HEADER = "S"
     PATH_HEADER = "Path"
     FLAGS_HEADER = "Flags"
-    LOCAL_VERSION_HEADER = "Local V."
-    LOCAL_HASH_HEADER = "Local H."
-    TRACKING_STATUS_HEADER = "Trk"
-    REMOTE_VERSION_HEADER = "Remote V."
-    REMOTE_HASH_HEADER = "Remote H."
-    MANIFEST_VERSION_HEADER = "Manifest V."
+    MANIFEST_VERSION_HEADER = "Manifest"
+    LOCAL_VERSION_HEADER = "Local Version"
+    TRACKING_STATUS_HEADER = "Track"
+    REMOTE_VERSION_HEADER = "Remote Version"
     TAG_HEADER = "Tag"
 
     HEADERS = [
         STATUS_HEADER,
         PATH_HEADER,
         FLAGS_HEADER,
+        MANIFEST_VERSION_HEADER,
         LOCAL_VERSION_HEADER,
-        LOCAL_HASH_HEADER,
         TRACKING_STATUS_HEADER,
         REMOTE_VERSION_HEADER,
-        REMOTE_HASH_HEADER,
-        MANIFEST_VERSION_HEADER,
         TAG_HEADER,
     ]
 
@@ -246,8 +242,6 @@ class ICompareTableEntry(abc.ABC):
     HIDE_ORDER = [
         TAG_HEADER,
         MANIFEST_VERSION_HEADER,
-        REMOTE_HASH_HEADER,
-        LOCAL_HASH_HEADER,
         REMOTE_VERSION_HEADER,
     ]
 
@@ -258,12 +252,11 @@ class ICompareTableEntry(abc.ABC):
             self.get_color_repo_status(),
             self.get_color_path(),
             self.get_color_vcs_tracking_flags(),
+            self.get_color_manifest_version(),
             self.get_color_local_version(),
-            self.get_color_local_hash(),
             self.get_color_track(),
             self.get_color_remote_version(),
-            self.get_color_remote_hash(),
-            self.get_color_manifest_version(),
+            #self.get_color_remote_hash(),
             self.get_color_tag(),
         ]
         row = self._wrap_row_with_background_color(row, is_odd_row)
@@ -326,10 +319,6 @@ class ICompareTableEntry(abc.ABC):
         return NotImplemented
 
     @abc.abstractmethod
-    def get_color_local_hash(self) -> str:
-        return NotImplemented
-
-    @abc.abstractmethod
     def get_color_remote_version(self) -> str:
         return NotImplemented
 
@@ -374,7 +363,6 @@ class CompareTable(pt.PrettyTable):
         self._narrow_table_if_necessary(max_width)
 
     def _narrow_table_if_necessary(self, max_width: int):
-        # Apply a margin.
         DISPLAY_WIDTH_MARGIN = 10
         max_width -= DISPLAY_WIDTH_MARGIN
 
@@ -454,9 +442,6 @@ class MissingManifestEntry(ICompareTableEntry):
         return Colors.MISSING_REPO + self._path
 
     def get_color_local_version(self) -> str:
-        return Colors.MISSING_REPO + "ABSENT FROM FILESYSTEM"
-
-    def get_color_local_hash(self) -> str:
         return ""
 
     def get_color_remote_version(self) -> str:
@@ -478,6 +463,12 @@ class MissingManifestEntry(ICompareTableEntry):
         return ""
 
 
+def is_probably_a_hash(the_hash: str) -> bool:
+    """Returns true if the string is a hash... probably."""
+    HASH_NUM_CHARACTERS = 40 
+    return len(the_hash) == HASH_NUM_CHARACTERS
+
+
 class CompareOutputEntry(ICompareTableEntry):
     """Entry for a repo which is discovered by the CompareCommand, but may be missing from the
     manifest (i.e. `manifest_version is None`)"""
@@ -490,6 +481,7 @@ class CompareOutputEntry(ICompareTableEntry):
     ) -> None:
         self._path = path
         self._compare_output = compare_output
+        self._compare_output.fix_detached_head()
         self._manifest_version = manifest_version
         self._is_local_current_with_manifest = self._manifest_version in [
             self._compare_output.local_branch,
@@ -512,7 +504,7 @@ class CompareOutputEntry(ICompareTableEntry):
                 self._is_dirty(),
                 self._vcs_tracking_status != VcsTrackingStatus.EQUAL,
                 self._repo_status != RepoStatus.NOMINAL,
-                # TODO(amusco): is empty git repo?
+                self._manifest_version != self._compare_output.local_branch,
             ]
         )
 
@@ -547,6 +539,8 @@ class CompareOutputEntry(ICompareTableEntry):
 
     @classmethod
     def _get_abbreviated_hash(cls, the_hash: str, max_len: int = HASH_MAX_LENGTH):
+        if is_probably_a_hash(the_hash) == False:
+            return the_hash
         is_short_enough = len(the_hash) <= max_len
         return the_hash if is_short_enough else the_hash[:max_len]
 
@@ -565,12 +559,9 @@ class CompareOutputEntry(ICompareTableEntry):
     def get_color_local_version(self) -> str:
         foreground = self._get_local_foreground_color()
         local_branch = self._get_abbreviated_version(self._compare_output.local_branch)
-        return f"{foreground}{local_branch}"
-
-    def get_color_local_hash(self) -> str:
-        foreground = self._get_local_foreground_color()
         local_hash = self._get_abbreviated_hash(self._compare_output.local_hash)
-        return f"{foreground}{local_hash}"
+        local_hash = f"{local_hash}" if local_hash != "" else ""
+        return f"{foreground}{local_hash} ({local_branch})"
 
     def _get_remote_foreground_color(self) -> str:
         if self._vcs_tracking_status not in [
@@ -590,7 +581,9 @@ class CompareOutputEntry(ICompareTableEntry):
         if remote == "" or remote_branch == "":
             return ""
         foreground = self._get_remote_foreground_color()
-        return f"{foreground}{remote}/{remote_branch}"
+        remote_hash = self._get_abbreviated_hash(self._compare_output.remote_hash)
+        remote_hash = f"{remote_hash}" if remote_hash != "" else ""
+        return f"{foreground}{remote_hash} ({remote}/{remote_branch})"
 
     def get_color_remote_hash(self) -> str:
         remote_hash = self._get_abbreviated_hash(self._compare_output.remote_hash)
@@ -602,10 +595,13 @@ class CompareOutputEntry(ICompareTableEntry):
     def get_color_manifest_version(self) -> str:
         if self._manifest_version is None:
             return ""
+        manifest_version = self._manifest_version
+        if is_probably_a_hash(manifest_version):
+            manifest_version = f"{self._get_abbreviated_hash(manifest_version)}"
         foreground = ""
         if self._is_local_current_with_manifest:
             foreground = Colors.MANIFEST_VERSION_NOMINAL
-        return f"{foreground}{self._manifest_version}"
+        return f"{foreground}{manifest_version}"
 
     def get_color_track(self) -> str:
         ahead, behind = self._compare_output.ahead, self._compare_output.behind

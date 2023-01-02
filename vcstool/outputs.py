@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 
 
 @dataclass
@@ -17,3 +18,11 @@ class CompareOutput:
     staged_changes: bool
     untracked_files: bool
     stashes: bool
+
+    def fix_detached_head(self):
+        """If The local branch is in a detached head state, parse the output to extract the hash
+        (or tag)."""
+        match = re.match(r"\(HEAD detached at (\S+)\)", self.local_branch)
+        if match is not None:
+            self.local_branch = "HEAD detached"
+            self.local_hash = match[1]
