@@ -81,6 +81,7 @@ class CompareCommand(Command):
 class Colors:
     """Namespace containing colors used throughout the CompareTable"""
 
+    # fmt: off
     RESET                    = ansi("reset")
     ROW_BACKGROUND_ODD       = ansi("reset")
     ROW_BACKGROUND_EVEN      = ansi("grey4b")
@@ -100,8 +101,8 @@ class Colors:
     VCS_TRACKING_AHEAD       = ansi("brightyellowf")
     VCS_TRACKING_DIVERGED    = ansi("brightyellowf")
     MANIFEST_VERSION_NOMINAL = ansi("brightblackf")
-
-    ERROR = ansi("redf")
+    ERROR                    = ansi("redf")
+    # fmt: on
 
 
 class Legend:
