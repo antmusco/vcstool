@@ -255,7 +255,7 @@ class ICompareTableEntry(abc.ABC):
             self.get_color_local_version(),
             self.get_color_track(),
             self.get_color_remote_version(),
-            #self.get_color_remote_hash(),
+            # self.get_color_remote_hash(),
             self.get_color_tag(),
         ]
         row = self._wrap_row_with_background_color(row, is_odd_row)
@@ -464,7 +464,7 @@ class MissingManifestEntry(ICompareTableEntry):
 
 def is_probably_a_hash(the_hash: str) -> bool:
     """Returns true if the string is a hash... probably."""
-    HASH_NUM_CHARACTERS = 40 
+    HASH_NUM_CHARACTERS = 40
     return len(the_hash) == HASH_NUM_CHARACTERS
 
 
