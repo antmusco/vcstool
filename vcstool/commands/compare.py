@@ -96,8 +96,6 @@ class Colors:
     INVALID_BRANCH_NAME      = ansi("redf")
     VCS_TRACKING_DIFFERENT   = ansi("brightyellowf")
     VCS_TRACKING_CURRENT     = ansi("brightblackf")
-    VCS_TRACKING_LOCAL       = ""
-    VCS_TRACKING_EQUAL       = ansi("brightblackf")
     VCS_TRACKING_BEHIND      = ansi("brightyellowf")
     VCS_TRACKING_AHEAD       = ansi("brightyellowf")
     VCS_TRACKING_DIVERGED    = ansi("brightyellowf")
@@ -114,8 +112,8 @@ class Legend:
     MISSING          = "M"
     SUPER_PROJECT    = "s"
     REPO_NOT_TRACKED = "U"
-    BEHIND           = "<"
-    AHEAD            = ">"
+    BEHIND           = ">"
+    AHEAD            = "<"
     DIVERGED         = "<>"
     UNSTAGED         = "*"
     STAGED           = "+"
@@ -223,7 +221,7 @@ class ICompareTableEntry(abc.ABC):
     FLAGS_HEADER = "Flags"
     MANIFEST_VERSION_HEADER = "Manifest"
     LOCAL_VERSION_HEADER = "Local Version"
-    TRACKING_STATUS_HEADER = "Track"
+    TRACKING_STATUS_HEADER = "Ah/Bh"
     REMOTE_VERSION_HEADER = "Remote Version"
     TAG_HEADER = "Tag"
 
@@ -606,16 +604,16 @@ class CompareOutputEntry(ICompareTableEntry):
     def get_color_track(self) -> str:
         ahead, behind = self._compare_output.ahead, self._compare_output.behind
         return {
-            VcsTrackingStatus.EQUAL: Colors.VCS_TRACKING_EQUAL + "eq",
-            VcsTrackingStatus.LOCAL: Colors.VCS_TRACKING_LOCAL + "local",
-            VcsTrackingStatus.BEHIND: (
-                f"{Colors.VCS_TRACKING_BEHIND}{Legend.BEHIND}{behind}"
-            ),
+            VcsTrackingStatus.EQUAL: "",
+            VcsTrackingStatus.LOCAL: "",
             VcsTrackingStatus.AHEAD: (
-                f"{Colors.VCS_TRACKING_AHEAD}   {ahead}{Legend.AHEAD}"
+                f"{Colors.VCS_TRACKING_BEHIND}{Legend.AHEAD}{ahead}"
+            ),
+            VcsTrackingStatus.BEHIND: (
+                f"{Colors.VCS_TRACKING_BEHIND}   {behind}{Legend.BEHIND}"
             ),
             VcsTrackingStatus.DIVERGED: (
-                f"{Colors.VCS_TRACKING_DIVERGED}{Legend.BEHIND}{behind},{ahead}{Legend.AHEAD}"
+                f"{Colors.VCS_TRACKING_DIVERGED}{Legend.AHEAD}{ahead},{behind}{Legend.BEHIND}"
             ),
             VcsTrackingStatus.ERROR: Colors.ERROR + "ERR",
         }[self._vcs_tracking_status]
