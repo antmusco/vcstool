@@ -17,8 +17,10 @@ from vcstool.outputs import CompareOutput
 from .command import add_common_arguments
 from .command import Command
 
+# Configuration constants
 HASH_MAX_LENGTH = 7
 VERSION_MAX_LENGTH = 35
+DISPLAY_WIDTH_MARGIN = 8
 
 
 class CompareCommand(Command):
@@ -63,6 +65,12 @@ class CompareCommand(Command):
             action="store_true",
             default=False,
             help="Only show significant repos.",
+        )
+        group.add_argument(
+            "--skip-hide-cols",
+            action="store_true",
+            default=False,
+            help="Don't hide columns in the table to fit the display.",
         )
         return parser
 
@@ -147,9 +155,10 @@ class Legend:
         MISSING_REPO = auto()
         VCS_TRACKING_STATUS = auto()
         REPO_STATUS = auto()
+        IS_NARROWED = auto()
 
     @classmethod
-    def get_string(cls, flags: Flags, max_width: int, manifest_file: str) -> str:
+    def get_string(cls, flags: Flags, display_width: int, manifest_file: str) -> str:
         """Returns the legend as a string based on flags."""
         legend = "\n"
         if flags & cls.Flags.VCS_TRACKING_STATUS:
@@ -162,7 +171,9 @@ class Legend:
                 cls.UNTRACKED,
                 cls.STASHES,
             ]
-            legend += cls._legend_from_symbols(vcs_tracking_symbols, max_width) + "\n"
+            legend += (
+                cls._legend_from_symbols(vcs_tracking_symbols, display_width) + "\n"
+            )
         if flags & cls.Flags.REPO_STATUS:
             repo_status_symbols = [
                 cls.REPO,
@@ -170,29 +181,42 @@ class Legend:
                 cls.SUPER_PROJECT,
                 cls.REPO_NOT_TRACKED,
             ]
-            legend += cls._legend_from_symbols(repo_status_symbols, max_width) + "\n"
+            legend += (
+                cls._legend_from_symbols(repo_status_symbols, display_width) + "\n"
+            )
         if flags & cls.Flags.MISSING_REPO:
             legend += "\n" + cls._missing_repos_tip_str(manifest_file) + "\n"
+        if flags & cls.Flags.IS_NARROWED:
+            legend += "\n" + cls._hidden_cols_tip_str() + "\n"
         # Remove the extra newline if no legend is needed.
         return legend if legend != "\n" else ""
 
     @classmethod
-    def _legend_from_symbols(cls, symbols: List[str], max_width: int) -> str:
+    def _legend_from_symbols(cls, symbols: List[str], display_width: int) -> str:
         separator = 5 * " "
         legend = separator.join(map(cls.get_symbol_description, symbols))
-        if len(legend) < max_width:
-            margin_length = int((max_width - len(legend)) / 2)
+        if len(legend) < display_width:
+            margin_length = int((display_width - len(legend)) / 2)
             legend = (" " * margin_length) + legend
         return Colors.LEGEND + legend + Colors.RESET
 
+    @classmethod
+    def _missing_repos_tip_str(cls, manifest_file: str) -> str:
+        return cls._format_tip_str(
+            "Tip: it looks like you have missing repositories. "
+            + "To initialize them execute the following commands:\n"
+            + f"\tvcs import src < {manifest_file}",
+        )
+
+    @classmethod
+    def _hidden_cols_tip_str(cls) -> str:
+        return cls._format_tip_str(
+            "Tip: some columns have been hidden to fit this display. To view the full table, try "
+            + "increasing the character width of this display, or run with the --skip-hide-cols flag."
+        )
+
     @staticmethod
-    def _missing_repos_tip_str(manifest_file: str) -> str:
-        tip = [
-            "Tip: it looks like you have missing repositories. ",
-            "To initialize them execute the following commands:\n",
-            f"\tvcs import src < {manifest_file}",
-        ]
-        tip_str = "".join(tip)
+    def _format_tip_str(tip_str: str) -> str:
         return Colors.TIP + tip_str + Colors.RESET
 
 
@@ -224,7 +248,6 @@ class ICompareTableEntry(abc.ABC):
     LOCAL_VERSION_HEADER = "Local Version"
     TRACKING_STATUS_HEADER = "Ah/Bh"
     REMOTE_VERSION_HEADER = "Remote Version"
-    TAG_HEADER = "Tag"
 
     HEADERS = [
         STATUS_HEADER,
@@ -234,17 +257,31 @@ class ICompareTableEntry(abc.ABC):
         LOCAL_VERSION_HEADER,
         TRACKING_STATUS_HEADER,
         REMOTE_VERSION_HEADER,
-        TAG_HEADER,
     ]
 
     # Order to hide rows in the table when the terminal is too small to display all columns.
-    HIDE_ORDER = [
-        TAG_HEADER,
-        MANIFEST_VERSION_HEADER,
+    HEADER_HIDE_ORDER = [
         REMOTE_VERSION_HEADER,
+        MANIFEST_VERSION_HEADER,
+        TRACKING_STATUS_HEADER,
+        LOCAL_VERSION_HEADER,
+        FLAGS_HEADER,
+        STATUS_HEADER,
     ]
 
-    def get_color_row(self, is_odd_row: bool, num_cols: int) -> List[str]:
+    HEADER_ALIGNMENT = {
+        STATUS_HEADER: "l",
+        PATH_HEADER: "l",
+        FLAGS_HEADER: "l",
+        MANIFEST_VERSION_HEADER: "l",
+        LOCAL_VERSION_HEADER: "l",
+        TRACKING_STATUS_HEADER: "c",
+        REMOTE_VERSION_HEADER: "l",
+    }
+
+    MAX_HIDE_COLUMNS = len(HEADER_HIDE_ORDER)
+
+    def get_color_row(self, is_odd_row: bool, cols_to_hide: int) -> List[str]:
         """Returns a formatted and colored row representing this entry."""
         # The order of these entries should match the order of HEADERS.
         row = [
@@ -255,21 +292,20 @@ class ICompareTableEntry(abc.ABC):
             self.get_color_local_version(),
             self.get_color_track(),
             self.get_color_remote_version(),
-            # self.get_color_remote_hash(),
-            self.get_color_tag(),
         ]
         row = self._wrap_row_with_background_color(row, is_odd_row)
-        return self._hide_n_columns(row, num_cols)
+        return self._hide_n_columns(row, cols_to_hide)
 
     @classmethod
-    def get_headers(cls, num_cols: int) -> List[str]:
-        """Returns the headers for the table, displaying only `num_cols`. The order the columns
-        are hidden are governed by HIDE_ORDER.
+    def get_headers(cls, cols_to_hide: int) -> List[str]:
+        """Returns the headers for the table, displaying only `cols_to_hide`. The order the
+        columns are hidden are governed by HEADER_HIDE_ORDER.
         """
         headers = list(cls.HEADERS)
-        cols_to_hide = len(headers) - num_cols
+        # Make sure we don't attempt to hide too many.
+        assert cols_to_hide <= cls.MAX_HIDE_COLUMNS
         for i in range(cols_to_hide):
-            header_to_hide = cls.HIDE_ORDER[i]
+            header_to_hide = cls.HEADER_HIDE_ORDER[i]
             idx_of_col_to_hide = headers.index(header_to_hide)
             del headers[idx_of_col_to_hide]
         # Dummy column for display formatting purposes.
@@ -277,12 +313,13 @@ class ICompareTableEntry(abc.ABC):
         return headers + DUMMY_END_HEADER
 
     @classmethod
-    def _hide_n_columns(cls, row: List[str], num_cols: int) -> List[str]:
+    def _hide_n_columns(cls, row: List[str], cols_to_hide: int) -> List[str]:
         # Remove headers from a local copy so that the indices match.
         headers = list(cls.HEADERS)
-        cols_to_hide = len(headers) - num_cols
+        # Make sure we don't attempt to hide too many.
+        cols_to_hide = min(len(cls.HEADER_HIDE_ORDER), cols_to_hide)
         for i in range(cols_to_hide):
-            header_to_hide = cls.HIDE_ORDER[i]
+            header_to_hide = cls.HEADER_HIDE_ORDER[i]
             idx_of_col_to_hide = headers.index(header_to_hide)
             del headers[idx_of_col_to_hide]
             del row[idx_of_col_to_hide]
@@ -337,10 +374,6 @@ class ICompareTableEntry(abc.ABC):
     def get_color_vcs_tracking_flags(self) -> str:
         return NotImplemented
 
-    @abc.abstractmethod
-    def get_color_tag(self) -> str:
-        return NotImplemented
-
 
 class CompareTable(pt.PrettyTable):
     """PrettyTable extension which displays a table describing the state of the workspace."""
@@ -349,64 +382,64 @@ class CompareTable(pt.PrettyTable):
         self,
         entries: Dict[str, ICompareTableEntry],
         manifest_file: str,
-        max_width: int = os.get_terminal_size().columns,
+        should_hide_cols: bool = False,
+        display_width: int = os.get_terminal_size().columns - DISPLAY_WIDTH_MARGIN,
     ) -> None:
         super().__init__()
-
         self._entries = entries
         self._manifest_file = manifest_file
         self._legend_flags = Legend.Flags(0)
+        self._display_width = display_width
+        self._should_hide_cols = should_hide_cols
+        self._cols_to_hide = 0
 
-        # Initial generation.
         self._reset_and_add_entries()
-        self._narrow_table_if_necessary(max_width)
-
-    def _narrow_table_if_necessary(self, max_width: int):
-        DISPLAY_WIDTH_MARGIN = 10
-        max_width -= DISPLAY_WIDTH_MARGIN
-
-        if self._table_width() < max_width:
+        if self._is_narrow_enough():
             return
 
-        # First, hide the tags column
-        num_cols = len(ICompareTableEntry.HEADERS) - 1
-        self._reset_and_add_entries(num_cols)
-        if self._table_width() < max_width:
-            return
-
-        # Next, try abbreviating the version names.
+        # If table is too wide, try abbreviating the version names.
         for _, entry in self._entries.items():
             entry.should_abbreviate_version = True
-        self._reset_and_add_entries(num_cols)
+        self._reset_and_add_entries()
+        if self._is_narrow_enough():
+            return
 
-        # Finally, continually remove columns from the right.
-        while self._table_width() >= max_width:
-            num_cols -= 1
-            self._reset_and_add_entries(num_cols)
+        # If that didn't work, hide the columns until we're narrow enough or can't hide any more
+        # columns.
+        while not self._is_narrow_enough() and self._can_hide_more_cols():
+            self._cols_to_hide += 1
+            self._reset_and_add_entries()
 
-    def _reset_and_add_entries(
-        self, num_cols: int = len(ICompareTableEntry.HEADERS)
-    ) -> None:
+    def _is_narrow_enough(self) -> bool:
+        return not self._should_hide_cols or (
+            self._table_width() <= self._display_width
+        )
+
+    def _can_hide_more_cols(self) -> bool:
+        return self._cols_to_hide < ICompareTableEntry.MAX_HIDE_COLUMNS
+
+    def _reset_and_add_entries(self) -> None:
         self.clear()
-        self._format_table(num_cols)
-        self._legend_flags = Legend.Flags(0)
+        self._format_table()
+        self._legend_flags = (
+            Legend.Flags.IS_NARROWED if self._cols_to_hide > 0 else Legend.Flags(0)
+        )
         for path in sorted(self._entries.keys()):
-            self._add_entry(self._entries[path], num_cols)
+            self._add_entry(self._entries[path])
 
-    def _format_table(self, num_cols: int) -> None:
+    def _format_table(self) -> None:
         """Adds the target column names and formatting to the table."""
-        self.field_names = ICompareTableEntry.get_headers(num_cols)
-        # Default left alignment for all headers
-        for header in self.field_names:
-            self.align[header] = "l"
+        self.field_names = ICompareTableEntry.get_headers(self._cols_to_hide)
+        for header, align in ICompareTableEntry.HEADER_ALIGNMENT.items():
+            self.align[header] = align
         self.border = True
         self.hrules = pt.HEADER
         self.vrules = pt.NONE
 
-    def _add_entry(self, entry: ICompareTableEntry, num_cols: int) -> None:
+    def _add_entry(self, entry: ICompareTableEntry) -> None:
         is_odd_row = (self.rowcount % 2) == 1
         self._legend_flags |= entry.get_legend_flags()
-        self.add_row(entry.get_color_row(is_odd_row, num_cols))
+        self.add_row(entry.get_color_row(is_odd_row, self._cols_to_hide))
 
     def _table_width(self) -> int:
         # Need to call get_string() so that _compute_table_width() works properly.
@@ -416,7 +449,7 @@ class CompareTable(pt.PrettyTable):
     def __str__(self) -> str:
         return self.get_string() + Legend.get_string(
             flags=self._legend_flags,
-            max_width=self._table_width(),
+            display_width=self._table_width(),
             manifest_file=self._manifest_file,
         )
 
@@ -456,9 +489,6 @@ class MissingManifestEntry(ICompareTableEntry):
         return ""
 
     def get_color_vcs_tracking_flags(self) -> str:
-        return ""
-
-    def get_color_tag(self) -> str:
         return ""
 
 
@@ -534,7 +564,9 @@ class CompareOutputEntry(ICompareTableEntry):
         if self.should_abbreviate_version is False:
             return version
         is_short_enough = len(version) <= max_len
-        return version if is_short_enough else version[:max_len] + "..."
+        ELLIPSIS = "..."
+        truncate_idx = max_len - len(ELLIPSIS)
+        return version if is_short_enough else version[:truncate_idx] + ELLIPSIS
 
     @classmethod
     def _get_abbreviated_hash(cls, the_hash: str, max_len: int = HASH_MAX_LENGTH):
@@ -624,10 +656,6 @@ class CompareOutputEntry(ICompareTableEntry):
             Colors.REPO_STATUS_DIRTY if self._is_dirty() else Colors.REPO_STATUS_CLEAN
         )
         return f"{foreground}{self._vcs_tracking_flags}"
-
-    def get_color_tag(self) -> str:
-        foreground = Colors.TAG
-        return f"{foreground}{self._compare_output.tag}"
 
     def _get_repo_status(self) -> None:
         if self._manifest_version is None:
@@ -791,7 +819,9 @@ def main(args=None, stdout=None, stderr=None) -> None:
         manifest_per_path,
         significant_only=args.significant,
     )
-    print(CompareTable(entries, manifest_file))
+    print(
+        CompareTable(entries, manifest_file, should_hide_cols=not args.skip_hide_cols)
+    )
     return 0
 
 
