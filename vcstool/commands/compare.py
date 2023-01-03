@@ -108,6 +108,8 @@ class Colors:
     VCS_TRACKING_BEHIND      = ansi("brightyellowf")
     VCS_TRACKING_AHEAD       = ansi("brightyellowf")
     VCS_TRACKING_DIVERGED    = ansi("brightyellowf")
+    VCS_TRACKING_EQUAL       = ansi("brightblackf")
+    VCS_TRACKING_LOCAL       = ansi("brightblackf")
     MANIFEST_VERSION_NOMINAL = ansi("brightblackf")
     ERROR                    = ansi("redf")
     # fmt: on
@@ -124,6 +126,8 @@ class Legend:
     BEHIND           = ">"
     AHEAD            = "<"
     DIVERGED         = "<>"
+    EQUAL            = "=="
+    LOCAL            = ""
     UNSTAGED         = "*"
     STAGED           = "+"
     UNTRACKED        = "%"
@@ -142,6 +146,8 @@ class Legend:
             cls.BEHIND           : f"{symbol} behind",
             cls.AHEAD            : f"{symbol} ahead",
             cls.DIVERGED         : f"{symbol} diverged",
+            cls.EQUAL            : f"{symbol} equal",
+            cls.LOCAL            : f"{symbol} local",
             cls.UNSTAGED         : f"{symbol} unstaged",
             cls.STAGED           : f"{symbol} staged",
             cls.UNTRACKED        : f"{symbol} untracked",
@@ -447,6 +453,9 @@ class CompareTable(pt.PrettyTable):
         return self._compute_table_width(self._get_options({}))
 
     def __str__(self) -> str:
+        # If we have no rows, don't display anything
+        if self.rowcount == 0:
+            return ""
         return self.get_string() + Legend.get_string(
             flags=self._legend_flags,
             display_width=self._table_width(),
@@ -513,11 +522,11 @@ class CompareOutputEntry(ICompareTableEntry):
         self._compare_output.fix_detached_head()
         self._manifest_version = manifest_version
         self._is_local_current_with_manifest = self._manifest_version in [
-            self._compare_output.local_branch,
+            self._compare_output.local_version,
             self._compare_output.local_hash,
         ]
         self._is_remote_current_with_manifest = self._manifest_version in [
-            self._compare_output.remote_branch,
+            self._compare_output.remote_version,
             self._compare_output.remote_hash,
         ]
 
@@ -533,7 +542,7 @@ class CompareOutputEntry(ICompareTableEntry):
                 self._is_dirty(),
                 self._vcs_tracking_status != VcsTrackingStatus.EQUAL,
                 self._repo_status != RepoStatus.NOMINAL,
-                self._manifest_version != self._compare_output.local_branch,
+                self._manifest_version != self._compare_output.local_version,
             ]
         )
 
@@ -576,7 +585,7 @@ class CompareOutputEntry(ICompareTableEntry):
         return the_hash if is_short_enough else the_hash[:max_len]
 
     def _get_local_foreground_color(self) -> str:
-        if not self._is_valid_branch_name(self._compare_output.local_branch):
+        if not self._is_valid_branch_name(self._compare_output.local_version):
             return Colors.INVALID_BRANCH_NAME
         elif self._vcs_tracking_status not in [
             VcsTrackingStatus.EQUAL,
@@ -589,10 +598,12 @@ class CompareOutputEntry(ICompareTableEntry):
 
     def get_color_local_version(self) -> str:
         foreground = self._get_local_foreground_color()
-        local_branch = self._get_abbreviated_version(self._compare_output.local_branch)
+        local_version = self._get_abbreviated_version(
+            self._compare_output.local_version
+        )
         local_hash = self._get_abbreviated_hash(self._compare_output.local_hash)
         local_hash = f"{local_hash}" if local_hash != "" else ""
-        return f"{foreground}{local_hash} ({local_branch})"
+        return f"{foreground}{local_hash} ({local_version})"
 
     def _get_remote_foreground_color(self) -> str:
         if self._vcs_tracking_status not in [
@@ -606,15 +617,15 @@ class CompareOutputEntry(ICompareTableEntry):
 
     def get_color_remote_version(self) -> str:
         remote = self._compare_output.remote
-        remote_branch = self._get_abbreviated_version(
-            self._compare_output.remote_branch
+        remote_version = self._get_abbreviated_version(
+            self._compare_output.remote_version
         )
-        if remote == "" or remote_branch == "":
+        if remote == "" or remote_version == "":
             return ""
         foreground = self._get_remote_foreground_color()
         remote_hash = self._get_abbreviated_hash(self._compare_output.remote_hash)
         remote_hash = f"{remote_hash}" if remote_hash != "" else ""
-        return f"{foreground}{remote_hash} ({remote}/{remote_branch})"
+        return f"{foreground}{remote_hash} ({remote}/{remote_version})"
 
     def get_color_remote_hash(self) -> str:
         remote_hash = self._get_abbreviated_hash(self._compare_output.remote_hash)
@@ -637,8 +648,8 @@ class CompareOutputEntry(ICompareTableEntry):
     def get_color_track(self) -> str:
         ahead, behind = self._compare_output.ahead, self._compare_output.behind
         return {
-            VcsTrackingStatus.EQUAL: "",
-            VcsTrackingStatus.LOCAL: "",
+            VcsTrackingStatus.EQUAL: f"{Colors.VCS_TRACKING_EQUAL}{Legend.EQUAL}",
+            VcsTrackingStatus.LOCAL: f"{Colors.VCS_TRACKING_LOCAL}{Legend.LOCAL}",
             VcsTrackingStatus.AHEAD: (
                 f"{Colors.VCS_TRACKING_BEHIND}{Legend.AHEAD}{ahead}"
             ),
@@ -700,7 +711,7 @@ class CompareOutputEntry(ICompareTableEntry):
         return False
 
     def _get_tracking_status(self) -> VcsTrackingStatus:
-        if not self._compare_output.remote_branch:
+        if not self._compare_output.remote_version:
             return VcsTrackingStatus.LOCAL
         ahead, behind = self._compare_output.ahead, self._compare_output.behind
         if ahead == 0 and behind == 0:

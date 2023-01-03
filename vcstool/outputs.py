@@ -6,8 +6,8 @@ import re
 class CompareOutput:
     """Simple dataclass which contains the output of the CompareCommand."""
 
-    local_branch: str
-    remote_branch: str
+    local_version: str
+    remote_version: str
     tag: str
     local_hash: str
     remote_hash: str
@@ -20,9 +20,9 @@ class CompareOutput:
     stashes: bool
 
     def fix_detached_head(self):
-        """If The local branch is in a detached head state, parse the output to extract the hash
+        """If The local version is in a detached head state, parse the output to extract the hash
         (or tag)."""
-        match = re.match(r"\(HEAD detached at (\S+)\)", self.local_branch)
+        match = re.match(r"\(HEAD detached at (\S+)\)", self.local_version)
         if match is not None:
-            self.local_branch = "HEAD detached"
+            self.local_version = "HEAD detached"
             self.local_hash = match[1]

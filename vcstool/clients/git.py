@@ -87,17 +87,17 @@ class GitClient(VcsClientBase):
         result =  self.custom(GitCustomCommand(['config', f'branch.{local_branch}.remote']))
         return result['output'] if result['returncode'] == 0 else ''
 
-    def _get_remote_branch(self, local_branch: str):
+    def _get_remote_version(self, local_branch: str):
         result =  self.custom(GitCustomCommand(['config', f'branch.{local_branch}.merge']))
-        remote_branch = result['output'] if result['returncode'] == 0 else ''
+        remote_version = result['output'] if result['returncode'] == 0 else ''
         REMOVE_PREFIX = 'refs/heads/'
-        if remote_branch.startswith(REMOVE_PREFIX):
-            remote_branch = remote_branch[len(REMOVE_PREFIX):]
-        return remote_branch
+        if remote_version.startswith(REMOVE_PREFIX):
+            remote_version = remote_version[len(REMOVE_PREFIX):]
+        return remote_version
 
-    def _get_tag(self, local_branch : str):
+    def _get_tag(self, local_version : str):
         result =  self.custom(GitCustomCommand(['describe', '--tags', '--abbrev=0', '--exact-match',
-                                                local_branch]))
+                                                local_version]))
         return result['output'].strip() if result['returncode'] == 0 else ''
 
     def _get_hash(self, branch: str, remote: str = ""):
@@ -110,24 +110,23 @@ class GitClient(VcsClientBase):
 
     def compare(self, command):
         result = self._branch(False)
-        # If we can't get the local branch, no point in continuing.
+        # If we can't get the local version, no point in continuing.
         if result['returncode']:
             return result
-        local_branch = result['output']
-
-        remote = self._get_remote(local_branch)
-        remote_branch = self._get_remote_branch(local_branch)
-        ahead, behind = self._get_ahead_behind(local_branch, remote, remote_branch)
+        local_version = result['output']
+        remote = self._get_remote(local_version)
+        remote_version = self._get_remote_version(local_version)
+        ahead, behind = self._get_ahead_behind(local_version, remote, remote_version)
 
         return {
             'cmd': 'compare',
             'cwd': self.path,
             'output': CompareOutput(
-                local_branch=local_branch,
-                remote_branch=remote_branch,
-                tag=self._get_tag(local_branch),
-                local_hash=self._get_hash(local_branch),
-                remote_hash=self._get_hash(remote_branch, remote),
+                local_version=local_version,
+                remote_version=remote_version,
+                tag=self._get_tag(local_version),
+                local_hash=self._get_hash(local_version),
+                remote_hash=self._get_hash(remote_version, remote),
                 remote=remote,
                 ahead=ahead,
                 behind=behind,
