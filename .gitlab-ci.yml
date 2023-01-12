@@ -31,3 +31,19 @@ test:
     - git config --global --add init.defaultBranch master
     - git config --global --add advice.detachedHead true
     - pytest -s -v test
+
+push-gitlab:
+  when: manual
+  allow_failure: true
+  script:
+    - make distro
+    - pip3 install --quiet twine
+    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python3 -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
+
+push-cloudsmith:
+  when: manual
+  allow_failure: true
+  script:
+    - make distro
+    - pip3 install --quiet cloudsmith-cli
+    - CLOUDSMITH_API_KEY=${JENKINS_CLOUDSMITH_API_KEY} cloudsmith push python outrider/outrider-python dist/*
