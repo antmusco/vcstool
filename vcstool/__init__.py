@@ -1,3 +1,3 @@
 from .clients import vcstool_clients  # noqa
 
-__version__ = '0.4.0+outrider'
+__version__ = '0.4.1+outrider'
