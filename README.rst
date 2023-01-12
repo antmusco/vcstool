@@ -100,6 +100,19 @@ Only for this command vcstool supports the pseudo clients ``tar`` and ``zip`` wh
 For those two types the ``version`` key is optional.
 If specified only entries from the archive which are in the subfolder specified by the version value are being extracted.
 
+Compare workspace with repositories file
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``vcs compare`` command outputs a table which displays the status of the workspace as compared with what is
+specified in the repositories file. Each line of the table corresponds to a repository in the workspace, and indicates a
+number of useful status indicators::
+
+  S   Path            Flags   Manifest   Local Version                       Ah/Bh   Remote Verion
+  --------------------------------------------------------------------------------------------------------------------
+  r   example_repo    +*%$    develop    c9b90af (feature/my_long_feat...)   <2      aei47ef (feature/my_long_feat...)
+
+         > behind     < ahead     <> diverged     * unstaged     + staged     % untracked     $ stashes
+
 
 Validate repositories file
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

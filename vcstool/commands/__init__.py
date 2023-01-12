@@ -1,4 +1,5 @@
 from .branch import BranchCommand
+from .compare import CompareCommand
 from .custom import CustomCommand
 from .diff import DiffCommand
 from .export import ExportCommand
@@ -12,6 +13,7 @@ from .validate import ValidateCommand
 
 vcstool_commands = []
 vcstool_commands.append(BranchCommand)
+vcstool_commands.append(CompareCommand)
 vcstool_commands.append(CustomCommand)
 vcstool_commands.append(DiffCommand)
 vcstool_commands.append(ExportCommand)

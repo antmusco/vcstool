@@ -36,7 +36,7 @@ def check_greater_zero(value):
 
 
 def add_common_arguments(
-    parser, skip_hide_empty=False, skip_nested=False, path_nargs='*',
+    parser, skip_hide_empty=False, skip_nested=False, skip_repos=False, path_nargs='*',
     path_help=None
 ):
     parser.formatter_class = argparse.ArgumentDefaultsHelpFormatter
@@ -59,9 +59,10 @@ def add_common_arguments(
     group.add_argument(
         '-w', '--workers', type=check_greater_zero, metavar='N',
         default=default_workers, help='Number of parallel worker threads')
-    group.add_argument(
-        '--repos', action='store_true', default=False,
-        help='List repositories which the command operates on')
+    if not skip_repos:
+        group.add_argument(
+            '--repos', action='store_true', default=False,
+            help='List repositories which the command operates on')
     if path_nargs == '?':
         path_help = path_help or 'Base path to look for repositories'
         group.add_argument(
