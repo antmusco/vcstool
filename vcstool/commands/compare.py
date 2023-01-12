@@ -437,12 +437,18 @@ class CompareTable(pt.PrettyTable):
 
     @classmethod
     def _get_default_display_width(cls):
-        return os.get_terminal_size().columns - DISPLAY_WIDTH_MARGIN
+        try:
+            # Use stdin instead of the default stdout since stdout does not have the appropriate
+            # ioctl when connected to a pipe.
+            return os.get_terminal_size(sys.stdin.fileno()).columns - DISPLAY_WIDTH_MARGIN
+        except Exception as ex:
+            print_err("Exception occured while querying terminal size: {}".format(str(ex)))
+        return None
 
     def _is_narrow_enough(self) -> bool:
-        return not self._should_hide_cols or (
-            self._table_width() <= self._display_width
-        )
+        if not self._should_hide_cols or self._display_width is None:
+            return True
+        return self._table_width() <= self._display_width
 
     def _can_hide_more_cols(self) -> bool:
         return self._cols_to_hide < ICompareTableEntry.MAX_HIDE_COLUMNS
