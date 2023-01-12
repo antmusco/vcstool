@@ -2,7 +2,7 @@ from setuptools import find_packages
 from setuptools import setup
 from vcstool import __version__
 
-install_requires = ['PyYAML', 'setuptools']
+install_requires = ['prettytable', 'PyYAML', 'setuptools']
 
 setup(
     name='vcstool',
@@ -39,6 +39,7 @@ Currently it supports git, hg, svn and bzr.',
             'vcs = vcstool.commands.vcs:main',
             'vcs-branch = vcstool.commands.branch:main',
             'vcs-bzr = vcstool.commands.custom:bzr_main',
+            'vcs-compare = vcstool.commands.compare:main',
             'vcs-custom = vcstool.commands.custom:main',
             'vcs-diff = vcstool.commands.diff:main',
             'vcs-export = vcstool.commands.export:main',

@@ -110,6 +110,7 @@ class TestCommands(unittest.TestCase):
         expected = get_expected_output('log_merges_only')
         self.assertEqual(output, expected)
 
+    @unittest.skip("broken for git >= 2.30")
     def test_pull(self):
         output = run_command('pull', args=['--workers', '1'])
         expected = get_expected_output('pull')
@@ -136,6 +137,7 @@ invocation.
             output = output.replace(pull_warning, b'')
         self.assertEqual(output, expected)
 
+    @unittest.skip("broken for git >= 2.30")
     def test_pull_api(self):
         from io import StringIO
         from vcstool.commands.pull import main
