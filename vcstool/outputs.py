@@ -12,6 +12,7 @@ class CompareOutput:
     local_hash: str
     remote_hash: str
     remote: str
+    remote_url: str
     ahead: int
     behind: int
     unstaged_changes: bool

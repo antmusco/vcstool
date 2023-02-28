@@ -151,6 +151,8 @@ class Legend:
     STAGED           = "+"
     UNTRACKED        = "%"
     STASHES          = "$"
+    BITBUCKET        = "B"
+    GITLAB           = "G"
     # fmt: on
 
     @classmethod
@@ -171,6 +173,8 @@ class Legend:
             cls.STAGED           : f"{symbol} staged",
             cls.UNTRACKED        : f"{symbol} untracked",
             cls.STASHES          : f"{symbol} stashes",
+            cls.BITBUCKET        : f"{symbol} bitbucket",
+            cls.GITLAB           : f"{symbol} gitlab",
         }[symbol]
         # fmt: on
 
@@ -214,7 +218,13 @@ class Legend:
         if flags & cls.Flags.IS_NARROWED:
             legend += "\n" + cls._hidden_cols_tip_str() + "\n"
         # Remove the extra newline if no legend is needed.
-        return legend if legend != "\n" else ""
+        legend = legend if legend != "\n" else ""
+        repo_location_symbols = [
+            cls.BITBUCKET,
+            cls.GITLAB,
+        ]
+        legend += cls._legend_from_symbols(repo_location_symbols, display_width)
+        return legend
 
     @classmethod
     def _legend_from_symbols(cls, symbols: List[str], display_width: int) -> str:
@@ -267,6 +277,7 @@ class ICompareTableEntry(abc.ABC):
     """Interface used to implement an entry (row) in the CompareTable."""
 
     STATUS_HEADER = "S"
+    LOCATION_HEADER = "L"
     PATH_HEADER = "Path"
     FLAGS_HEADER = "Flags"
     MANIFEST_VERSION_HEADER = "Manifest"
@@ -274,8 +285,9 @@ class ICompareTableEntry(abc.ABC):
     TRACKING_STATUS_HEADER = "Ah/Bh"
     REMOTE_VERSION_HEADER = "Remote Version"
 
-    HEADERS = [
+    HEADER_ORDER = [
         STATUS_HEADER,
+        LOCATION_HEADER,
         PATH_HEADER,
         FLAGS_HEADER,
         MANIFEST_VERSION_HEADER,
@@ -286,6 +298,7 @@ class ICompareTableEntry(abc.ABC):
 
     # Order to hide rows in the table when the terminal is too small to display all columns.
     HEADER_HIDE_ORDER = [
+        LOCATION_HEADER,
         REMOTE_VERSION_HEADER,
         MANIFEST_VERSION_HEADER,
         TRACKING_STATUS_HEADER,
@@ -297,6 +310,7 @@ class ICompareTableEntry(abc.ABC):
     HEADER_ALIGNMENT = {
         STATUS_HEADER: "l",
         PATH_HEADER: "l",
+        LOCATION_HEADER: "l",
         FLAGS_HEADER: "l",
         MANIFEST_VERSION_HEADER: "l",
         LOCAL_VERSION_HEADER: "l",
@@ -308,9 +322,10 @@ class ICompareTableEntry(abc.ABC):
 
     def get_color_row(self, is_odd_row: bool, cols_to_hide: int) -> List[str]:
         """Returns a formatted and colored row representing this entry."""
-        # The order of these entries should match the order of HEADERS.
+        # The order of these entries should match the order of HEADER_ORDER.
         row = [
             self.get_color_repo_status(),
+            self.get_remote_location(),
             self.get_color_path(),
             self.get_color_vcs_tracking_flags(),
             self.get_color_manifest_version(),
@@ -326,7 +341,7 @@ class ICompareTableEntry(abc.ABC):
         """Returns the headers for the table, displaying only `cols_to_hide`. The order the
         columns are hidden are governed by HEADER_HIDE_ORDER.
         """
-        headers = list(cls.HEADERS)
+        headers = list(cls.HEADER_ORDER)
         # Make sure we don't attempt to hide too many.
         assert cols_to_hide <= cls.MAX_HIDE_COLUMNS
         for i in range(cols_to_hide):
@@ -340,7 +355,7 @@ class ICompareTableEntry(abc.ABC):
     @classmethod
     def _hide_n_columns(cls, row: List[str], cols_to_hide: int) -> List[str]:
         # Remove headers from a local copy so that the indices match.
-        headers = list(cls.HEADERS)
+        headers = list(cls.HEADER_ORDER)
         # Make sure we don't attempt to hide too many.
         cols_to_hide = min(len(cls.HEADER_HIDE_ORDER), cols_to_hide)
         for i in range(cols_to_hide):
@@ -373,6 +388,10 @@ class ICompareTableEntry(abc.ABC):
 
     @abc.abstractmethod
     def get_color_path(self) -> str:
+        return NotImplemented
+
+    @abc.abstractmethod
+    def get_remote_location(self) -> str:
         return NotImplemented
 
     @abc.abstractmethod
@@ -511,6 +530,9 @@ class MissingManifestEntry(ICompareTableEntry):
     def get_color_path(self) -> str:
         return Colors.MISSING_REPO + self._path
 
+    def get_remote_location(self) -> str:
+        return ""
+
     def get_color_local_version(self) -> str:
         return ""
 
@@ -597,6 +619,14 @@ class CompareOutputEntry(ICompareTableEntry):
     def get_color_path(self) -> str:
         foreground = Colors.SIGNIFICANT if self.is_significant() else ""
         return f"{foreground}{self._path}"
+
+    def get_remote_location(self) -> str:
+        remote_url = self._compare_output.remote_url
+        if "gitlab" in remote_url:
+            return Legend.GITLAB
+        if "bbs" in remote_url:
+            return Legend.BITBUCKET
+        return ""
 
     def _get_abbreviated_version(self, version: str, max_len: int = VERSION_MAX_LENGTH):
         if self.should_abbreviate_version is False:

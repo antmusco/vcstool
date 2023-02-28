@@ -115,6 +115,9 @@ class GitClient(VcsClientBase):
             return result
         local_version = result['output']
         remote = self._get_remote(local_version)
+        # Using the existing _get_remote_url() which doesn't clean up the output.
+        remote_url_result = self._get_remote_url(remote)
+        remote_url = "" if remote_url_result['returncode'] else remote_url_result["output"].strip()
         remote_version = self._get_remote_version(local_version)
         ahead, behind = self._get_ahead_behind(local_version, remote, remote_version)
 
@@ -128,6 +131,7 @@ class GitClient(VcsClientBase):
                 local_hash=self._get_hash(local_version),
                 remote_hash=self._get_hash(remote_version, remote),
                 remote=remote,
+                remote_url=remote_url,
                 ahead=ahead,
                 behind=behind,
                 unstaged_changes=self._unstaged_changes(),
